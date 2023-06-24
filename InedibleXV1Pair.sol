@@ -46,8 +46,8 @@ contract InedibleXV1Pair is IInedibleXV1Pair, InedibleXV1ERC20 {
     bool public launch;
     // The time that token vesting ends.
     uint256 public vestingEnd;
-    // The fee for swaps. TODO: think about this
-    uint256 public swapFee = 30;
+    // The fee for swaps.
+    uint256 public swapFee = 36;
 
     uint private unlocked = 1;
     modifier lock() {
