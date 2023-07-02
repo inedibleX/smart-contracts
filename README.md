@@ -1,6 +1,15 @@
 # inedibleX Smart Contracts
-### <b> This code has traps built into it to avoid copycats before launch, do not use this code.</b>
-
+### Bug Bounty
+For the bug bounty we're accepting medium, high, and critical level severities. The definitions are as follows:<br><br>
+Medium: The code does not work correctly in a way that significantly impacts functionality, but does not result in lost funds.<br>
+High: Low-medium (but not negligible such as dust lost from calculations) loss of funds such as the ability to steal fees.<br>
+Critical: Loss of funds through theft or permanent loss affecting a large amount of user funds, including their initial liquidity.<br><br>
+Decisions on bounty ratings are at the sole discretion of the team. Payout amounts are as follows:<br><br>
+Medium: 0.05% of token supply (~444B tokens)<br>
+High: 0.1% of token supply (~888B tokens)<br>
+Critical: 0.5% of token supply (4.44T tokens) <-- Critical rewards will be vested over 1 month<br><br>
+Please contact security@inediblex.com with any reports or questions!
+### Functionality
 inedibleX is a safe dex launchpad created as an Inedible Coin community project. We take the preferred method of fair launches today–opening a simple Uniswap pool–and add protections directly into the dex itself to protect users while maintaining the same experience.
 <br><br>
 In addition to these smart contracts, the frontend will have further protections such as blocking a user from purchasing a token if it detects they will not be able to sell it afterwards, and rating how well distributed a project’s tokens are.
