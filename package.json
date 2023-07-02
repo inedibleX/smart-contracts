@@ -1,0 +1,44 @@
+{
+  "name": "inediblex",
+  "version": "1.0",
+  "scripts": {
+    "clean": "shx rm -rf ./artifacts ./cache ./coverage ./src/types ./coverage.json",
+    "compile": "cross-env TS_NODE_TRANSPILE_ONLY=true hardhat compile",
+    "lint": "npm run lint:sol && npm run lint:ts && npm run prettier:check",
+    "lint:sol": "solhint --config ./.solhint.json --max-warnings 0 \"contracts/**/*.sol\"",
+    "lint:ts": "eslint --config ./.eslintrc.js --ignore-path ./.eslintignore --ext .js,.ts .",
+    "prettier": "prettier --write \"**/*.{js,json,md,sol,ts,yaml,yml}\"",
+    "prettier:check": "prettier --check \"**/*.{js,json,md,sol,ts,yaml,yml}\"",
+    "test": "hardhat test",
+    "typechain": "cross-env TS_NODE_TRANSPILE_ONLY=true hardhat typechain"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-network-helpers": "^1.0.8",
+    "@nomicfoundation/hardhat-toolbox": "^2.0.1",
+    "@openzeppelin/contracts": "^4.9.2",
+    "@types/big.js": "^6.1.6",
+    "@types/node": "^18.11.18",
+    "@typescript-eslint/eslint-plugin": "^5.48.2",
+    "@typescript-eslint/parser": "^5.48.2",
+    "@uniswap/v2-periphery": "^1.1.0-beta.0",
+    "cross-env": "^7.0.3",
+    "dotenv": "^16.0.3",
+    "eslint": "^8.32.0",
+    "eslint-config-prettier": "^8.6.0",
+    "eslint-config-standard": "^17.0.0",
+    "eslint-plugin-import": "^2.27.5",
+    "eslint-plugin-node": "^11.1.0",
+    "eslint-plugin-prettier": "^4.2.1",
+    "eslint-plugin-promise": "^6.1.1",
+    "hardhat": "^2.12.6",
+    "hardhat-abi-exporter": "^2.10.1",
+    "hardhat-preprocessor": "^0.1.5",
+    "prettier": "^2.8.3",
+    "prettier-plugin-solidity": "^1.1.1",
+    "shx": "^0.3.4",
+    "solhint": "^3.3.8"
+  },
+  "dependencies": {
+    "big.js": "^6.2.1"
+  }
+}
