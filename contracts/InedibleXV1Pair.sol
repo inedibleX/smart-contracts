@@ -37,6 +37,7 @@ contract InedibleXV1Pair is IInedibleXV1Pair, InedibleXV1ERC20 {
     // The time that token vesting ends.
     uint40 public vestingEnd;
     // Minimum percent of a token that must be initially supplied.
+    uint40 public initialLockDuration;
     uint16 public minSupplyPct;
     // Percent of tokens to send to the treasury from initial supply.
     uint16 public launchFeePct;
@@ -113,8 +114,7 @@ contract InedibleXV1Pair is IInedibleXV1Pair, InedibleXV1ERC20 {
             uint40 timestamp = uint40(block.timestamp);
             // won't overflow, router restricts vesting < 365 days
             vestingEnd = timestamp + _vestingDuration;
-
-            lockedUntil[_deployer] = block.timestamp.add(_lockDuration);
+            initialLockDuration = _lockDuration;
         }
     }
 
@@ -221,6 +221,8 @@ contract InedibleXV1Pair is IInedibleXV1Pair, InedibleXV1ERC20 {
             uint256 minSupply = (tokenSupply * minSupplyPct) / DENOM;
             // Ends with tokens in pool actually less than amount0 because the treasury is sent a %
             require(minSupply <= launchAmount, "Not enough tokens supplied.");
+
+            lockedUntil[to] = block.timestamp.add(initialLockDuration);
             address feeTo = IInedibleXV1Factory(factory).feeTo();
             launchToken.approve(feeTo, launchFee);
             IRewards(feeTo).payFee(address(launchToken), launchFee);
