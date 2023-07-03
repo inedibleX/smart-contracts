@@ -517,7 +517,9 @@ describe("InedibleXV1Pair", () => {
       // user's cumulative has not updated yet
       expect(userCumulativeBefore).to.equal(0);
       // FIRST CLAIM
+
       await pair.claimFees(wallet.address);
+      expect(await pair.unclaimed(wallet.address)).to.equal(0);
       const userCumulativeAfter = await pair.lastUserCumulative(wallet.address);
       const totalCumulative = await pair.cumulativeFees();
 
@@ -830,7 +832,7 @@ describe("InedibleXV1Pair", () => {
     const expectedLiquidity = await pair.balanceOf(wallet.address);
 
     // const expectedLiquidity = liquidity;
-    await fastForward(30 * 24 * 60 * 60);
+    await fastForward(MIN_LOCK.toNumber() + 1000);
     await pair.transfer(pair.address, expectedLiquidity);
     // Fast forward so that the user is allowed to transfer this tokens
     const token1BalBefore = await token1.balanceOf(wallet.address);

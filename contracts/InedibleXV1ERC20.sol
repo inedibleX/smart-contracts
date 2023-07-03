@@ -147,6 +147,7 @@ contract InedibleXV1ERC20 is IUniswapV2ERC20 {
                 feeAmount.add(_unclaimed),
                 true
             );
+            unclaimed[_user] = 0;
             _burnHelper(_user, true);
         } else {
             kLast = uint(reserve0).mul(reserve1);
