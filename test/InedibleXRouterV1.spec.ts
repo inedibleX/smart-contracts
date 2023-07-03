@@ -20,7 +20,6 @@ import {
   WETH,
   WETH_WHALE1,
 } from "./shared/utilities";
-import { isMainnetFork } from "../env_helpers";
 
 describe("InedibleXRouterV1", () => {
   async function fixture() {
@@ -75,7 +74,7 @@ describe("InedibleXRouterV1", () => {
     const timestamp = (await ethers.provider.getBlock("latest")).timestamp;
 
     await router[
-      "addLiquidityETH(address,uint256,uint256,uint256,address,uint256,(bool,uint16,uint40,uint40))"
+      "addLiquidityETH(address,uint256,uint256,uint256,address,uint256,(bool,bool,uint16,uint40,uint40))"
     ](
       token.address,
       ethers.utils.parseEther("5000"),
@@ -84,6 +83,7 @@ describe("InedibleXRouterV1", () => {
       other.address,
       timestamp + 1000,
       {
+        deployNewPool: true,
         launch: true,
         launchFeePct: LAUNCH_FEE_PCT,
         lockDuration: MIN_LOCK,
@@ -99,5 +99,70 @@ describe("InedibleXRouterV1", () => {
     const pairBalance = await pair.balanceOf(other.address);
 
     expect(pairBalance).to.eq("4949747468305832669805");
+  });
+  it("addLiquidityETH: fail if user doesn't want to create a new pool", async () => {
+    const { router, other, token } = await loadFixture(fixture);
+    const tokenAmount = TOTAL_SUPPLY.mul(50).div(100);
+
+    await token.approve(router.address, tokenAmount);
+    const timestamp = (await ethers.provider.getBlock("latest")).timestamp;
+
+    await expect(
+      router[
+        "addLiquidityETH(address,uint256,uint256,uint256,address,uint256,(bool,bool,uint16,uint40,uint40))"
+      ](
+        token.address,
+        ethers.utils.parseEther("5000"),
+        tokenAmount,
+        tokenAmount,
+        other.address,
+        timestamp + 1000,
+        {
+          deployNewPool: false,
+          launch: true,
+          launchFeePct: LAUNCH_FEE_PCT,
+          lockDuration: MIN_LOCK,
+          vestingDuration: MIN_VESTING,
+        },
+        { value: tokenAmount }
+      )
+    ).to.be.revertedWith("can't deploy a new pool");
+  });
+  it("addLiquidityETH: fail if someone frontran and created a pool", async () => {
+    const { router, other, token, factory } = await loadFixture(fixture);
+    const tokenAmount = TOTAL_SUPPLY.mul(50).div(100);
+
+    await token.approve(router.address, tokenAmount);
+    const timestamp = (await ethers.provider.getBlock("latest")).timestamp;
+
+    await factory.createPair(
+      token.address,
+      WETH,
+      true,
+      LAUNCH_FEE_PCT,
+      MIN_LOCK,
+      MIN_VESTING
+    );
+
+    await expect(
+      router[
+        "addLiquidityETH(address,uint256,uint256,uint256,address,uint256,(bool,bool,uint16,uint40,uint40))"
+      ](
+        token.address,
+        ethers.utils.parseEther("5000"),
+        tokenAmount,
+        tokenAmount,
+        other.address,
+        timestamp + 1000,
+        {
+          deployNewPool: true,
+          launch: true,
+          launchFeePct: LAUNCH_FEE_PCT,
+          lockDuration: MIN_LOCK,
+          vestingDuration: MIN_VESTING,
+        },
+        { value: tokenAmount }
+      )
+    ).to.be.revertedWith("pool already exists");
   });
 });

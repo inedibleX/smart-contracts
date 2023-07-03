@@ -7,6 +7,7 @@ import "./v2-periphery/UniswapV2Router02.sol";
 
 contract InedibleXRouterV1 is UniswapV2Router02 {
     struct LaunchParams {
+        bool deployNewPool;
         bool launch;
         uint16 launchFeePct;
         uint40 lockDuration;
@@ -32,6 +33,7 @@ contract InedibleXRouterV1 is UniswapV2Router02 {
         if (
             IInedibleXV1Factory(factory).getPair(tokenA, tokenB) == address(0)
         ) {
+            require(launchParams.deployNewPool, "can't deploy a new pool");
             IInedibleXV1Factory(factory).createPair(
                 tokenA,
                 tokenB,
@@ -40,6 +42,8 @@ contract InedibleXRouterV1 is UniswapV2Router02 {
                 launchParams.lockDuration,
                 launchParams.vestingDuration
             );
+        }else {
+            require(!launchParams.deployNewPool, "pool already exists");
         }
         (uint reserveA, uint reserveB) = UniswapV2Library.getReserves(
             factory,
