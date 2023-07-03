@@ -2,9 +2,10 @@
 pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/governance/utils/IVotes.sol";
-import "./interfaces/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 contract Rewards {
+    using SafeERC20 for IERC20;
     // Allowed to withdraw leftover tokens after 3 months.
     address public dao;
     // The inedible token.
@@ -36,7 +37,10 @@ contract Rewards {
      * @param _amount The amount of tokens being paid as fees.
      **/
     function payFee(address _token, uint256 _amount) external {
-        IERC20(_token).transferFrom(msg.sender, address(this), _amount);
+        // fix for backrun in a same block
+        require(launches[_token][block.number] == 0, "Already set");
+
+        IERC20(_token).safeTransferFrom(msg.sender, address(this), _amount);
         launches[_token][block.number] = _amount;
         emit NewRewards(_token, _amount, block.number);
     }
@@ -73,7 +77,7 @@ contract Rewards {
 
             uint256 owed = (amount * balance) / supply;
             if (owed != 0) {
-                IERC20(_tokens[i]).transfer(_user, owed);
+                IERC20(_tokens[i]).safeTransfer(_user, owed);
                 emit ClaimedReward(_user, _tokens[i], _timePoints[i], owed);
             }
         }
@@ -89,6 +93,8 @@ contract Rewards {
         address[] memory _tokens,
         uint256[] memory _timePoints
     ) external view returns (uint256[] memory owed) {
+        owed = new uint256[](_tokens.length);
+
         for (uint256 i = 0; i < _tokens.length; i++) {
             uint256 amount = launches[_tokens[i]][_timePoints[i]];
             (uint256 balance, uint256 supply) = inedibleCheck(
