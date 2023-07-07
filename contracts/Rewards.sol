@@ -116,7 +116,7 @@ contract Rewards {
         uint256 _timePoint
     ) public view returns (uint256 _balance, uint256 _totalSupply) {
         _balance = inedible.getPastVotes(_user, _timePoint);
-        _totalSupply = inedible.getPastTotalSupply(_timePoint);
+        _totalSupply = 888_888_888_888_888 ether;
     }
 
     /**

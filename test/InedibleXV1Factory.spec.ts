@@ -4,7 +4,7 @@ import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 
 import {
   DEFAULT_LAUNCH_FEE_PCT,
-  DEFAULT_MIN_SUPPLY_PCT,
+  EASE_MULTISIG,
   MIN_LOCK,
   MIN_VESTING,
   TEST_ADDRESSES,
@@ -16,7 +16,13 @@ describe("InedibleXV1Factory", () => {
   async function fixture() {
     const tmp = await ethers.getContractFactory("InedibleXV1Factory");
     const [wallet, other] = await ethers.getSigners();
-    const factory = await tmp.deploy(wallet.address, other.address);
+    const factory = await tmp.deploy(
+      wallet.address,
+      other.address,
+      EASE_MULTISIG,
+      ethers.constants.AddressZero
+
+    );
     return { factory: factory, wallet, other };
   }
 
@@ -55,6 +61,7 @@ describe("InedibleXV1Factory", () => {
         TEST_ADDRESSES[1],
         create2Address,
         1,
+        true,
         MIN_LOCK,
         MIN_VESTING
       );
@@ -124,6 +131,38 @@ describe("InedibleXV1Factory", () => {
       TEST_ADDRESSES.slice().reverse() as [string, string]
     );
   });
+  it("createPair: should allow to pair against any token if not launch", async () => {
+    const { factory } = await loadFixture(fixture);
+
+    const pairContract = await ethers.getContractFactory("InedibleXV1Pair");
+    const create2Address = getCreate2Address(
+      factory.address,
+      [TEST_ADDRESSES[0], TEST_ADDRESSES[1]],
+      pairContract.bytecode
+    );
+    await expect(
+      factory.createPair(
+        TEST_ADDRESSES[0],
+        TEST_ADDRESSES[1],
+        false,
+        DEFAULT_LAUNCH_FEE_PCT,
+        MIN_LOCK,
+        MIN_VESTING
+      )
+    )
+      .to.emit(factory, "PairCreated")
+      .withArgs(TEST_ADDRESSES[0], TEST_ADDRESSES[1], create2Address, 1)
+      .to.emit(factory, "InedibleCreated")
+      .withArgs(
+        TEST_ADDRESSES[0],
+        TEST_ADDRESSES[1],
+        create2Address,
+        1,
+        false,
+        0,
+        0
+      );
+  });
 
   xit("createPair:gas", async () => {
     const { factory } = await loadFixture(fixture);
@@ -140,7 +179,7 @@ describe("InedibleXV1Factory", () => {
 
   it("setTreasury", async () => {
     const { factory, wallet, other } = await loadFixture(fixture);
-    expect(await factory.treasury()).to.eq(ethers.constants.AddressZero);
+    expect(await factory.treasury()).to.eq(EASE_MULTISIG);
     await expect(
       factory.connect(other).setTreasury(other.address)
     ).to.be.revertedWith("Inedible: onlyDao");

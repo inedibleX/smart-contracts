@@ -4,7 +4,6 @@ pragma solidity =0.5.16;
 import "./interfaces/IUniswapV2ERC20.sol";
 import "./libraries/SafeMath.sol";
 
-
 contract InedibleXV1ERC20 is IUniswapV2ERC20 {
     using SafeMath for uint;
 
@@ -17,7 +16,7 @@ contract InedibleXV1ERC20 is IUniswapV2ERC20 {
 
     // pack variables to use single slot
     uint8 public constant decimals = 18;
-    uint32 internal blockTimestampLast; // 
+    uint32 internal blockTimestampLast; //
     uint8 private unlocked = 1;
 
     uint public kLast; // reserve0 * reserve1, as of immediately after the most recent liquidity event

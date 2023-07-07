@@ -11,6 +11,7 @@ export const TEST_ADDRESSES: [string, string] = [
   "0x2000000000000000000000000000000000000000",
   WETH,
 ];
+export const EASE_MULTISIG = "0x1f28eD9D4792a567DaD779235c2b766Ab84D8E33";
 export const MIN_SUPPLY_PCT = BigNumber.from(5000);
 export const MIN_VESTING = BigNumber.from(2592000);
 export const MIN_LOCK = BigNumber.from(2592000);

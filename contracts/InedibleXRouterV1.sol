@@ -42,7 +42,7 @@ contract InedibleXRouterV1 is UniswapV2Router02 {
                 launchParams.lockDuration,
                 launchParams.vestingDuration
             );
-        }else {
+        } else {
             require(!launchParams.deployNewPool, "pool already exists");
         }
         (uint reserveA, uint reserveB) = UniswapV2Library.getReserves(
@@ -80,6 +80,37 @@ contract InedibleXRouterV1 is UniswapV2Router02 {
         }
     }
 
+    function addLiquidity(
+        address tokenA,
+        address tokenB,
+        uint amountADesired,
+        uint amountBDesired,
+        uint amountAMin,
+        uint amountBMin,
+        address to,
+        uint deadline,
+        LaunchParams calldata launchParams
+    )
+        external
+        ensure(deadline)
+        returns (uint amountA, uint amountB, uint liquidity)
+    {
+        (amountA, amountB) = _addLiquidity(
+            tokenA,
+            tokenB,
+            amountADesired,
+            amountBDesired,
+            amountAMin,
+            amountBMin,
+            launchParams
+        );
+
+        address pair = UniswapV2Library.pairFor(factory, tokenA, tokenB);
+        TransferHelper.safeTransferFrom(tokenA, msg.sender, pair, amountA);
+        TransferHelper.safeTransferFrom(tokenB, msg.sender, pair, amountB);
+        liquidity = IUniswapV2Pair(pair).mint(to);
+    }
+
     function addLiquidityETH(
         address token,
         uint amountTokenDesired,
@@ -91,7 +122,6 @@ contract InedibleXRouterV1 is UniswapV2Router02 {
     )
         external
         payable
-        virtual
         ensure(deadline)
         returns (uint amountToken, uint amountETH, uint liquidity)
     {

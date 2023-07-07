@@ -11,6 +11,7 @@ contract InedibleXV1Factory is IInedibleXV1Factory {
     // Added by Inedible
     address public dao;
     address public pendingDao;
+    address public router;
     address public constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     uint16 public minLaunchFeePct = 100;
     uint16 public minSupplyPct = 2500;
@@ -24,9 +25,17 @@ contract InedibleXV1Factory is IInedibleXV1Factory {
         _;
     }
 
-    constructor(address _dao, address _feeTo) public {
+    constructor(
+        address _dao,
+        address _feeTo,
+        address _treasury,
+        address _router
+    ) public {
         dao = _dao;
         feeTo = _feeTo;
+        treasury = _treasury;
+        router = _router;
+
     }
 
     function allPairsLength() external view returns (uint) {
@@ -42,10 +51,13 @@ contract InedibleXV1Factory is IInedibleXV1Factory {
         uint40 vesting
     ) external returns (address pair) {
         require(tokenA != tokenB, "UniswapV2: IDENTICAL_ADDRESSES");
-        require(
-            tokenA == WETH || tokenB == WETH,
-            "Inedible: pair must be against WETH"
-        );
+        // allow only WETH pairs if launch is true
+        if (launch) {
+            require(
+                tokenA == WETH || tokenB == WETH,
+                "Inedible: pair must be against WETH"
+            );
+        }
         require(
             launchFeePct >= minLaunchFeePct && launchFeePct <= DENOMINATOR / 10,
             "Inedible: Launch fee is not high enough."
@@ -68,15 +80,16 @@ contract InedibleXV1Factory is IInedibleXV1Factory {
         assembly {
             pair := create2(0, add(bytecode, 32), mload(bytecode), salt)
         }
+
         IInedibleXV1Pair(pair).initialize(
             token0,
             token1,
+            router, // should be factory
             minSupplyPct, // min supply %
             launchFeePct, // launch fee %
             launch, // launch
             lock, // lock duration
-            vesting, // vesting duration
-            msg.sender // deployer
+            vesting // vesting duration
         );
         getPair[token0][token1] = pair;
         getPair[token1][token0] = pair; // populate mapping in the reverse direction
@@ -84,12 +97,18 @@ contract InedibleXV1Factory is IInedibleXV1Factory {
 
         emit PairCreated(token0, token1, pair, allPairs.length);
 
+        // if launch is false lock and vesting should be null
+        if (!launch) {
+            lock = 0;
+            vesting = 0;
+        }
         // Added by Inedible
         emit InedibleCreated(
             token0,
             token1,
             pair,
             allPairs.length,
+            launch,
             lock,
             vesting
         );

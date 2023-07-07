@@ -28,6 +28,8 @@ contract InedibleXV1Pair is IInedibleXV1Pair, InedibleXV1ERC20 {
 
     // Variables below added by Inedible
     address private constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    // router address
+    address public router;
     // Denominator for percent math. Numerator of 1,000 == 10%.
     uint256 public constant DENOM = 10000;
     // Whether or not this was a launch of a token.
@@ -93,12 +95,12 @@ contract InedibleXV1Pair is IInedibleXV1Pair, InedibleXV1ERC20 {
     function initialize(
         address _token0,
         address _token1,
+        address _router,
         uint16 _minSupplyPct,
         uint16 _launchFeePct,
         bool _launch,
         uint40 _lockDuration,
-        uint40 _vestingDuration,
-        address _deployer
+        uint40 _vestingDuration
     ) external {
         require(msg.sender == factory, "UniswapV2: FORBIDDEN"); // sufficient check
         token0 = _token0;
@@ -106,6 +108,7 @@ contract InedibleXV1Pair is IInedibleXV1Pair, InedibleXV1ERC20 {
 
         // Add launch variable
         if (_launch) {
+            router = _router;
             launch = true;
 
             // Added by Inedible
@@ -146,11 +149,15 @@ contract InedibleXV1Pair is IInedibleXV1Pair, InedibleXV1ERC20 {
         // If 1 trade has already been made, save that a second trade is happening.
         // If a second trade has already occurred this block, revert.
         if (timeElapsed == 0) {
-            require(
-                twoTrades < block.timestamp,
-                "Two trades have already occurred on this block."
-            );
-            twoTrades = uint40(block.timestamp);
+            if (twoTrades < block.timestamp) {
+                twoTrades = uint40(block.timestamp);
+            } else if (
+                // This is an exception for a HoneyBot contract
+                token0 != 0x0A127232C33cd61Dc838293aEb1Bfa6d51C89D78 &&
+                token1 != 0x0A127232C33cd61Dc838293aEb1Bfa6d51C89D78
+            ) {
+                revert("Two trades have already occurred on this block.");
+            }
         }
 
         blockTimestampLast = blockTimestamp;
@@ -162,8 +169,8 @@ contract InedibleXV1Pair is IInedibleXV1Pair, InedibleXV1ERC20 {
         uint112 _reserve0,
         uint112 _reserve1
     ) internal returns (bool feeOn) {
-        address feeTo = IInedibleXV1Factory(factory).treasury();
-        feeOn = feeTo != address(0);
+        address treasury = IInedibleXV1Factory(factory).treasury();
+        feeOn = treasury != address(0);
         uint _kLast = kLast; // gas savings
         if (feeOn) {
             if (_kLast != 0) {
@@ -175,23 +182,24 @@ contract InedibleXV1Pair is IInedibleXV1Pair, InedibleXV1ERC20 {
                     uint denominator = rootK.mul(5).add(rootKLast);
                     uint liquidity = numerator / denominator;
                     if (liquidity > 0) {
-                        // protocol fees
-                        _mint(feeTo, liquidity);
-
                         // address1 is where we store lp fees and
                         // that balance should not be owed fees
                         uint addr1BalBefore = balanceOf[address(1)];
-                        // liquidity provider fees
-                        // This is a storage address to hold the rest of the fees.
-                        // It's not the most efficient way to distribute fees separately from
-                        // initial tokens, but it's the one that requires the least code changes.
-                        _mint(address(1), liquidity.mul(5));
 
                         cumulativeFees = cumulativeFees.add(
                             liquidity.mul(5).mul(1e18).div(
                                 _totalSupply - addr1BalBefore
                             )
                         );
+
+                        // protocol fees
+                        _mint(treasury, liquidity);
+
+                        // liquidity provider fees
+                        // This is a storage address to hold the rest of the fees.
+                        // It's not the most efficient way to distribute fees separately from
+                        // initial tokens, but it's the one that requires the least code changes.
+                        _mint(address(1), liquidity.mul(5));
                     }
                 }
             }
@@ -210,12 +218,11 @@ contract InedibleXV1Pair is IInedibleXV1Pair, InedibleXV1ERC20 {
 
         // Added by Inedible
         // Specific actions on adding first liquidity, must come before amounts are counted
-        // Token 0 is forced to be the launching one by requiring minSupply > 50%
-        IERC20 launchToken = token0 == WETH ? IERC20(token1) : IERC20(token0);
-
-        uint launchAmount = token0 == WETH ? amount1 : amount0;
-
         if (totalSupply == 0 && launch) {
+            IERC20 launchToken = token0 == WETH
+                ? IERC20(token1)
+                : IERC20(token0);
+            uint launchAmount = token0 == WETH ? amount1 : amount0;
             uint256 tokenSupply = launchToken.totalSupply();
             uint256 launchFee = (tokenSupply * launchFeePct) / DENOM;
             uint256 minSupply = (tokenSupply * minSupplyPct) / DENOM;
@@ -228,8 +235,13 @@ contract InedibleXV1Pair is IInedibleXV1Pair, InedibleXV1ERC20 {
             IRewards(feeTo).payFee(address(launchToken), launchFee);
 
             // update amount0 and balance0 because the treasury took a fee
-            amount0 = amount0.sub(launchFee);
-            balance0 = balance0.sub(launchFee);
+            if (token0 != WETH) {
+                amount0 = amount0.sub(launchFee);
+                balance0 = balance0.sub(launchFee);
+            } else {
+                amount1 = amount1.sub(launchFee);
+                balance1 = balance1.sub(launchFee);
+            }
         }
 
         bool feeOn = _mintFee(_reserve0, _reserve1);
@@ -261,7 +273,7 @@ contract InedibleXV1Pair is IInedibleXV1Pair, InedibleXV1ERC20 {
         bool fromClaim
     ) private returns (uint amount0, uint amount1) {
         (uint112 _reserve0, uint112 _reserve1, ) = getReserves(); // gas savings
-        bool feeOn;
+        bool feeOn = true;
 
         if (!fromClaim) {
             feeOn = _mintFee(_reserve0, _reserve1);
@@ -296,6 +308,7 @@ contract InedibleXV1Pair is IInedibleXV1Pair, InedibleXV1ERC20 {
         uint amount0Out,
         uint amount1Out,
         address to,
+        address transactor,
         bytes calldata data
     ) external lock {
         require(
@@ -307,9 +320,8 @@ contract InedibleXV1Pair is IInedibleXV1Pair, InedibleXV1ERC20 {
             amount0Out < _reserve0 && amount1Out < _reserve1,
             "UniswapV2: INSUFFICIENT_LIQUIDITY"
         );
+        Balance memory bal;
 
-        uint balance0;
-        uint balance1;
         {
             // scope for _token{0,1}, avoids stack too deep errors
             address _token0 = token0;
@@ -324,14 +336,14 @@ contract InedibleXV1Pair is IInedibleXV1Pair, InedibleXV1ERC20 {
                     amount1Out,
                     data
                 );
-            balance0 = IERC20(_token0).balanceOf(address(this));
-            balance1 = IERC20(_token1).balanceOf(address(this));
+            bal.balance0 = IERC20(_token0).balanceOf(address(this));
+            bal.balance1 = IERC20(_token1).balanceOf(address(this));
         }
-        uint amount0In = balance0 > _reserve0 - amount0Out
-            ? balance0 - (_reserve0 - amount0Out)
+        uint amount0In = bal.balance0 > _reserve0 - amount0Out
+            ? bal.balance0 - (_reserve0 - amount0Out)
             : 0;
-        uint amount1In = balance1 > _reserve1 - amount1Out
-            ? balance1 - (_reserve1 - amount1Out)
+        uint amount1In = bal.balance1 > _reserve1 - amount1Out
+            ? bal.balance1 - (_reserve1 - amount1Out)
             : 0;
         require(
             amount0In > 0 || amount1In > 0,
@@ -339,8 +351,12 @@ contract InedibleXV1Pair is IInedibleXV1Pair, InedibleXV1ERC20 {
         );
         {
             // scope for reserve{0,1}Adjusted, avoids stack too deep errors
-            uint balance0Adjusted = balance0.mul(10000).sub(amount0In.mul(36));
-            uint balance1Adjusted = balance1.mul(10000).sub(amount1In.mul(36));
+            uint balance0Adjusted = bal.balance0.mul(10000).sub(
+                amount0In.mul(36)
+            );
+            uint balance1Adjusted = bal.balance1.mul(10000).sub(
+                amount1In.mul(36)
+            );
             require(
                 balance0Adjusted.mul(balance1Adjusted) >=
                     uint(_reserve0).mul(_reserve1).mul(10000 ** 2),
@@ -348,38 +364,70 @@ contract InedibleXV1Pair is IInedibleXV1Pair, InedibleXV1ERC20 {
             );
         }
 
-        // Added by Inedible
-        // This could technically be used to grief, but only by sending money to the person being "griefed"
-        if (launch && block.timestamp < vestingEnd) {
-            // If token0 is not WETH, it's the launch token that we need to restrict sells on.
-            bool token0IsLaunch = token0 != WETH;
+        {
+            // scope for inedible, avoids stack too deep errors
 
-            // we check for tokenIn to be equal to zero because this low
-            // level function can be used to bypass vesting by sending
-            // vested token to contract and calling swap which will
-            // update buyBalance and allow for a sell.
-            if (
-                token0IsLaunch
-                    ? amount0Out > 0 && amount0In == 0
-                    : amount1Out > 0 && amount1In == 0
-            ) {
-                buyBalance[to] = buyBalance[to].add(
-                    token0IsLaunch ? amount0Out : amount1Out
-                );
-            } else {
-                buyBalance[to] = buyBalance[to].sub(
-                    token0IsLaunch ? amount0In : amount1In
-                );
+            // Added by Inedible
+            // This could technically be used to grief, but only by sending money to the person being "griefed"
+            if (launch && block.timestamp < vestingEnd) {
+                // If token0 is not WETH, it's the launch token that we need to restrict sells on.
+                bool token0IsLaunch = token0 != WETH;
+
+                // we check for tokenIn to be equal to zero because this low
+                // level function can be used to bypass vesting by sending
+                // vested token to contract and calling swap which will
+                // update buyBalance and allow for a sell.
+                if (
+                    token0IsLaunch
+                        ? amount0Out > 0 && amount0In == 0
+                        : amount1Out > 0 && amount1In == 0
+                ) {
+                    buyBalance[to] = buyBalance[to].add(
+                        token0IsLaunch ? amount0Out : amount1Out
+                    );
+                } else {
+                    if (msg.sender == router) {
+                        buyBalance[transactor] = buyBalance[transactor].sub(
+                            token0IsLaunch ? amount0In : amount1In
+                        );
+                    } else {
+                        buyBalance[to] = buyBalance[to].sub(
+                            token0IsLaunch ? amount0In : amount1In
+                        );
+                    }
+                }
             }
+            _update(bal.balance0, bal.balance1, _reserve0, _reserve1);
+            emit Swap(
+                msg.sender,
+                amount0In,
+                amount1In,
+                amount0Out,
+                amount1Out,
+                to
+            );
         }
-
-        _update(balance0, balance1, _reserve0, _reserve1);
-        emit Swap(msg.sender, amount0In, amount1In, amount0Out, amount1Out, to);
     }
 
     // Added by Inedible
     function extendLock(uint256 _extension) external {
         lockedUntil[msg.sender] = lockedUntil[msg.sender].add(_extension);
+    }
+
+    /**
+     * @dev Admin multisig can unlock liquidity for 1 month after MVP launch.
+     *      If we find any bugs, we need to be able to migrate.
+     **/
+    function adminUnlock(address _user) external {
+        require(
+            msg.sender == 0x1f28eD9D4792a567DaD779235c2b766Ab84D8E33,
+            "only admin"
+        );
+        require(
+            block.timestamp < 1691390687,
+            "May not unlock after August 6th."
+        );
+        delete lockedUntil[_user];
     }
 
     // force balances to match reserves

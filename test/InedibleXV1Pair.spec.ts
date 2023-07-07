@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { BigNumber, constants as ethconst } from "ethers";
 import hre, { ethers } from "hardhat";
-import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
+import { loadFixture, mine } from "@nomicfoundation/hardhat-network-helpers";
 
 import {
   expandTo18Decimals,
@@ -16,6 +16,7 @@ import {
   WETH_WHALE,
   TOTAL_SUPPLY,
   getExpectedFees,
+  EASE_MULTISIG,
 } from "./shared/utilities";
 import { InedibleXV1Pair, ERC20, PairERC20 } from "../src/types";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
@@ -38,7 +39,13 @@ describe("InedibleXV1Pair", () => {
 
     const factory = await (
       await ethers.getContractFactory("InedibleXV1Factory")
-    ).deploy(wallet.address, rewards.address);
+    ).deploy(
+      wallet.address,
+      rewards.address,
+      EASE_MULTISIG,
+      ethers.constants.AddressZero
+    );
+
 
     const tokenA = (await (
       await ethers.getContractFactory("PairERC20")
@@ -132,9 +139,8 @@ describe("InedibleXV1Pair", () => {
 
   describe("mint()", function () {
     it("should mint liquidity when it is a launch token", async () => {
-      const { pair, wallet, token0, token1, factory } = await loadFixture(
-        fixture
-      );
+      const { pair, wallet, token0, token1, factory, rewards } =
+        await loadFixture(fixture);
       // launch fees equals to 1% of total supply
       const launchFees = TOTAL_SUPPLY.div(100);
       // 50% of token0 total supply
@@ -147,10 +153,13 @@ describe("InedibleXV1Pair", () => {
 
       // as liquidity is sqrt of product of the reserves and we are adding equal amounts of tokens
       const expectedLiquidity = TOTAL_SUPPLY.div(2);
+      const lastBlock = await ethers.provider.getBlockNumber();
 
       await expect(pair.mint(wallet.address))
         .to.emit(token0, "Transfer")
         .withArgs(pair.address, await factory.feeTo(), launchFees)
+        .to.emit(rewards, "NewRewards")
+        .withArgs(token0.address, launchFees, lastBlock + 1)
         .to.emit(pair, "Transfer")
         .withArgs(ethconst.AddressZero, ethconst.AddressZero, MINIMUM_LIQUIDITY)
         .to.emit(pair, "Transfer")
@@ -168,6 +177,8 @@ describe("InedibleXV1Pair", () => {
       expect(await pair.balanceOf(wallet.address)).to.eq(
         expectedLiquidity.sub(MINIMUM_LIQUIDITY)
       );
+      // rewards contract should have received 1% of total supply
+      expect(await token0.balanceOf(await factory.feeTo())).to.eq(launchFees);
       expect(await token0.balanceOf(pair.address)).to.eq(token0Amount);
       expect(await token1.balanceOf(pair.address)).to.eq(token1Amount);
       const reserves = await pair.getReserves();
@@ -212,6 +223,127 @@ describe("InedibleXV1Pair", () => {
       const reserves = await pair1.getReserves();
       expect(reserves[0]).to.eq(token0Amount);
       expect(reserves[1]).to.eq(token1Amount);
+    });
+    it("should distribute fair share of the fees to liquidity providers", async () => {
+      const { pair1, wallet, other, tokenC, token1, signers, factory } =
+        await loadFixture(fixture);
+
+      await factory.setTreasury(signers[1].address);
+
+      // add liquidity from user 1
+      // 10% of token0 total supply
+      const token0Amount = expandTo18Decimals(6);
+      // 10% of token1 total supply keeping token0: token1 = 1:1
+      const token1Amount = expandTo18Decimals(6);
+      await tokenC.transfer(pair1.address, token0Amount);
+      await token1.transfer(pair1.address, token1Amount);
+      // as liquidity is sqrt of product of the reserves and we are adding equal amounts of tokens
+      const expectedLiquidity = expandTo18Decimals(6);
+      await pair1.mint(wallet.address);
+      expect(await pair1.balanceOf(wallet.address)).to.equal(
+        expectedLiquidity.sub(MINIMUM_LIQUIDITY)
+      );
+
+      // add liquidity from user 2
+      await tokenC.transfer(pair1.address, expandTo18Decimals(4));
+      await token1.transfer(pair1.address, expandTo18Decimals(4));
+      await pair1.mint(other.address);
+
+      // do a swap
+      const user = signers[0];
+      const swapAmount = expandTo18Decimals(10);
+
+      const reserves = await pair1.getReserves();
+      const expectedOutputAmount = getExpectedAmount({
+        tokenInReserve: reserves[0],
+        tokenOutReserve: reserves[1],
+        amountIn: swapAmount,
+      });
+
+      await pair1.claimFees(wallet.address);
+
+      await token1.transfer(pair1.address, swapAmount);
+      await pair1
+        .connect(user)
+        .swap(expectedOutputAmount, 0, user.address, user.address, "0x");
+
+      let token1BalBefore = await token1.balanceOf(wallet.address);
+      let tokenCBalBefore = await tokenC.balanceOf(wallet.address);
+      // "=========================== WALLET CLAIM 1 ========================="
+      // claim fees for wallet
+      await pair1.connect(wallet).claimFees(wallet.address);
+      let token1BalAfter = await token1.balanceOf(wallet.address);
+      let tokenCBalAfter = await tokenC.balanceOf(wallet.address);
+
+      const walletFeesToken1 = token1BalAfter.sub(token1BalBefore);
+      const walletFeesTokenC = tokenCBalAfter.sub(tokenCBalBefore);
+
+      const cumulativeFees = await pair1.cumulativeFees();
+      const lastUserCumulative = await pair1.lastUserCumulative(wallet.address);
+
+      expect(cumulativeFees).to.equal(lastUserCumulative);
+
+      token1BalBefore = await token1.balanceOf(other.address);
+      tokenCBalBefore = await tokenC.balanceOf(other.address);
+      // claim fees for other
+      // "=========================== OTHER CLAIM 1 ========================="
+      await pair1.connect(other).claimFees(other.address);
+      token1BalAfter = await token1.balanceOf(other.address);
+      tokenCBalAfter = await tokenC.balanceOf(other.address);
+
+      const otherFeesToken1 = token1BalAfter.sub(token1BalBefore);
+      const otherFeesTokenC = tokenCBalAfter.sub(tokenCBalBefore);
+
+      token1BalBefore = await token1.balanceOf(wallet.address);
+      tokenCBalBefore = await tokenC.balanceOf(wallet.address);
+      // claim fees for wallet again
+      // "=========================== WALLET CLAIM 2========================="
+      await pair1.connect(wallet).claimFees(wallet.address);
+      token1BalAfter = await token1.balanceOf(wallet.address);
+      tokenCBalAfter = await tokenC.balanceOf(wallet.address);
+      // wallet should recieve nothing on claiming again
+      expect(token1BalBefore).to.equal(token1BalAfter);
+      expect(tokenCBalBefore).to.equal(tokenCBalAfter);
+
+      // "=========================== OTHER CLAIM 2========================="
+      // claim fees for other
+      token1BalBefore = await token1.balanceOf(other.address);
+      tokenCBalBefore = await tokenC.balanceOf(other.address);
+      await pair1.connect(other).claimFees(other.address);
+      token1BalAfter = await token1.balanceOf(other.address);
+      tokenCBalAfter = await tokenC.balanceOf(other.address);
+
+      // wallet should recieve nothing on claiming again
+      expect(token1BalBefore).to.equal(token1BalAfter);
+      expect(tokenCBalBefore).to.equal(tokenCBalAfter);
+
+      const totalFeesToken1 = walletFeesToken1.add(otherFeesToken1);
+      const totalFeesTokenC = walletFeesTokenC.add(otherFeesTokenC);
+      const SCALE_PCT = BigNumber.from(10000);
+
+      const walletToken1FeePct = walletFeesToken1
+        .mul(SCALE_PCT)
+        .div(totalFeesToken1);
+      const walletTokenCFeePct = walletFeesTokenC
+        .mul(SCALE_PCT)
+        .div(totalFeesTokenC);
+
+      const otherToken1FeePct = otherFeesToken1
+        .mul(SCALE_PCT)
+        .div(totalFeesToken1);
+      const otherTokencFeePct = otherFeesTokenC
+        .mul(SCALE_PCT)
+        .div(totalFeesTokenC);
+
+      // Wallet has ~60% of liquidity share and should recieve
+      // ~60% of the fees
+      expect(walletToken1FeePct).to.be.gte(5999);
+      expect(walletTokenCFeePct).to.be.gte(5900);
+
+      // Other has ~40% of liquidity share and should recieve
+      // ~40% of the fees
+      expect(otherToken1FeePct).to.be.gte(3999);
+      expect(otherTokencFeePct).to.be.gte(3999);
     });
   });
 
@@ -262,9 +394,21 @@ describe("InedibleXV1Pair", () => {
 
     await token1.transfer(pair.address, swapAmount);
     await expect(
-      pair.swap(expectedOutputAmount.add(1), 0, wallet.address, "0x")
+      pair.swap(
+        expectedOutputAmount.add(1),
+        0,
+        wallet.address,
+        wallet.address,
+        "0x"
+      )
     ).to.be.revertedWith("UniswapV2: K");
-    await pair.swap(expectedOutputAmount, 0, wallet.address, "0x");
+    await pair.swap(
+      expectedOutputAmount,
+      0,
+      wallet.address,
+      wallet.address,
+      "0x"
+    );
   });
   it("should not allow user to bypass vesting period", async () => {
     const { pair, wallet, token0, token1 } = await loadFixture(fixture);
@@ -279,8 +423,9 @@ describe("InedibleXV1Pair", () => {
     await token0.transfer(pair.address, amount);
 
     // this should revert because the vester should not be allowed to bypass vesting period
-    await expect(pair.swap(expectedAmount, 0, wallet.address, "0x")).to.be
-      .reverted;
+    await expect(
+      pair.swap(expectedAmount, 0, wallet.address, wallet.address, "0x")
+    ).to.be.reverted;
   });
 
   it("swap:token0", async () => {
@@ -305,12 +450,16 @@ describe("InedibleXV1Pair", () => {
 
     // minter should not be allowed to swap token0 for token1
     await expect(
-      pair.connect(wallet).swap(0, expectedOutputAmount, other.address, "0x")
+      pair
+        .connect(wallet)
+        .swap(0, expectedOutputAmount, other.address, other.address, "0x")
     ).to.be.reverted;
 
     // user's can't swap token0 for token1 if they have not bought it already
     await expect(
-      pair.connect(other).swap(0, expectedOutputAmount, other.address, "0x")
+      pair
+        .connect(other)
+        .swap(0, expectedOutputAmount, other.address, other.address, "0x")
     ).to.be.reverted;
 
     // skim previously transferred token1 amount
@@ -323,7 +472,9 @@ describe("InedibleXV1Pair", () => {
     await token1.connect(other).transfer(pair.address, swapAmount);
 
     await expect(
-      pair.connect(other).swap(expectedOutputAmount, 0, other.address, "0x")
+      pair
+        .connect(other)
+        .swap(expectedOutputAmount, 0, other.address, other.address, "0x")
     )
       .to.emit(token0, "Transfer")
       .withArgs(pair.address, other.address, expectedOutputAmount)
@@ -364,7 +515,9 @@ describe("InedibleXV1Pair", () => {
 
     await token0.connect(other).transfer(pair.address, swapAmount);
     await expect(
-      pair.connect(other).swap(0, expectedOutputAmount, other.address, "0x")
+      pair
+        .connect(other)
+        .swap(0, expectedOutputAmount, other.address, other.address, "0x")
     )
       .to.emit(token1, "Transfer")
       .withArgs(pair.address, other.address, expectedOutputAmount)
@@ -413,7 +566,7 @@ describe("InedibleXV1Pair", () => {
 
       await pair
         .connect(other)
-        .swap(expectedOutputAmount, 0, wallet.address, "0x");
+        .swap(expectedOutputAmount, 0, wallet.address, wallet.address, "0x");
 
       const balBeforeAddingLiquidty = await pair.balanceOf(other.address);
       await addLiquidity(token0, token1, pair, other, swapAmount, swapAmount);
@@ -442,7 +595,7 @@ describe("InedibleXV1Pair", () => {
 
       await pair
         .connect(user)
-        .swap(expectedOutputAmount, 0, user.address, "0x");
+        .swap(expectedOutputAmount, 0, user.address, user.address, "0x");
 
       const totalSupplyAfterSwap = await pair.totalSupply();
 
@@ -505,7 +658,7 @@ describe("InedibleXV1Pair", () => {
 
       await pair
         .connect(other)
-        .swap(expectedOutputAmount, 0, wallet.address, "0x");
+        .swap(expectedOutputAmount, 0, wallet.address, wallet.address, "0x");
 
       // Claim fees after swap
       const walletToken0BalBefore = await token0.balanceOf(wallet.address);
@@ -594,11 +747,16 @@ describe("InedibleXV1Pair", () => {
 
       const supplyAfter = await pair.totalSupply();
       // Supply should not increase here
-      expect(supplyBefore).to.gte(supplyAfter);
+      expect(supplyBefore).to.eq(supplyAfter);
     });
   });
   it("claimFees, _mintFee, _updateFees", async () => {
-    const { pair, wallet, token0, token1, other } = await loadFixture(fixture);
+    const { pair, wallet, token0, token1, other, factory } = await loadFixture(
+      fixture
+    );
+
+    // set treasury to zero address
+    await factory.setTreasury(ethers.constants.AddressZero);
 
     // Add liquidity
     await addDefaultLiquidity(token0, token1, pair, wallet);
@@ -614,7 +772,7 @@ describe("InedibleXV1Pair", () => {
     await token1.connect(other).transfer(pair.address, swapAmount);
     await pair
       .connect(other)
-      .swap(expectedOutputAmount, 0, wallet.address, "0x");
+      .swap(expectedOutputAmount, 0, wallet.address, wallet.address, "0x");
 
     // Wait time
     await fastForward(30 * 24 * 60 * 60);
@@ -714,7 +872,9 @@ describe("InedibleXV1Pair", () => {
     let otherToken0BalBefore = await token0.balanceOf(other.address);
 
     await expect(
-      pair.connect(other).swap(expectedOutputAmount, 0, other.address, "0x")
+      pair
+        .connect(other)
+        .swap(expectedOutputAmount, 0, other.address, other.address, "0x")
     )
       .to.emit(token0, "Transfer")
       .withArgs(pair.address, other.address, expectedOutputAmount)
@@ -765,7 +925,7 @@ describe("InedibleXV1Pair", () => {
     await token0.connect(other).transfer(pair.address, swapAmount);
     await pair
       .connect(other)
-      .swap(0, expectedOutputAmount, other.address, "0x");
+      .swap(0, expectedOutputAmount, other.address, other.address, "0x");
 
     expect(
       (await token1.balanceOf(other.address)).sub(otherToken1BalBefore)
@@ -814,7 +974,13 @@ describe("InedibleXV1Pair", () => {
     await time.setNextBlockTimestamp(
       (await ethers.provider.getBlock("latest")).timestamp + 1
     );
-    const tx = await pair.swap(expectedOutputAmount, 0, wallet.address, "0x");
+    const tx = await pair.swap(
+      expectedOutputAmount,
+      0,
+      wallet.address,
+      wallet.address,
+      "0x"
+    );
     const receipt = await tx.wait();
     expect(receipt.gasUsed).to.eq(73673);
   });
@@ -899,7 +1065,7 @@ describe("InedibleXV1Pair", () => {
     await token1.transfer(pair.address, swapAmount);
     await time.setNextBlockTimestamp(blockTimestamp + 10);
     // swap to a new price eagerly instead of syncing
-    await pair.swap(expectedAmount, 0, wallet.address, "0x"); // make the price nice
+    await pair.swap(expectedAmount, 0, wallet.address, wallet.address, "0x"); // make the price nice
     const cumulative0Last = await pair.price0CumulativeLast();
     const cumulative1Last = await pair.price1CumulativeLast();
 
@@ -915,6 +1081,9 @@ describe("InedibleXV1Pair", () => {
     const { pair, wallet, token1, factory, token0 } = await loadFixture(
       fixture
     );
+
+    // set treasury to zero address
+    await factory.setTreasury(ethers.constants.AddressZero);
 
     const { token0Amount, token1Amount } = await addDefaultLiquidity(
       token0,
@@ -934,7 +1103,13 @@ describe("InedibleXV1Pair", () => {
       amountIn: swapAmount,
     });
     await token1.transfer(pair.address, swapAmount);
-    await pair.swap(expectedOutputAmount, 0, wallet.address, "0x");
+    await pair.swap(
+      expectedOutputAmount,
+      0,
+      wallet.address,
+      wallet.address,
+      "0x"
+    );
 
     const walletLpBalance = await pair.balanceOf(wallet.address);
     await fastForward(30 * 24 * 60 * 60);
@@ -966,7 +1141,13 @@ describe("InedibleXV1Pair", () => {
     });
 
     await token1.transfer(pair.address, swapAmount);
-    await pair.swap(expectedOutputAmount, 0, wallet.address, "0x");
+    await pair.swap(
+      expectedOutputAmount,
+      0,
+      wallet.address,
+      wallet.address,
+      "0x"
+    );
 
     const expectedLiquidity = await pair.balanceOf(wallet.address);
     await fastForward(30 * 24 * 60 * 60);
@@ -1012,5 +1193,53 @@ describe("InedibleXV1Pair", () => {
     expect(await token1.balanceOf(pair.address)).to.gt(
       token1BalExpected.sub(token0BalExpected.div(100000))
     );
+  });
+  describe("adminUnlock()", function () {
+    const admin = "0x1f28eD9D4792a567DaD779235c2b766Ab84D8E33";
+    it("should not allow non-admin to unlock liquidity", async () => {
+      const { pair, wallet, token0, token1 } = await loadFixture(fixture);
+      await addDefaultLiquidity(token0, token1, pair, wallet);
+      await expect(
+        pair.connect(wallet).adminUnlock(wallet.address)
+      ).to.be.revertedWith("only admin");
+    });
+    it("should allow admin to unlock liquidity", async () => {
+      const { pair, wallet, token0, token1 } = await loadFixture(fixture);
+      // impersonate admin
+      await hre.network.provider.request({
+        method: "hardhat_impersonateAccount",
+        params: [admin],
+      });
+      const signer = await ethers.getSigner(admin);
+      await addDefaultLiquidity(token0, token1, pair, wallet);
+      const lockedUnitlBefore = await pair.lockedUntil(wallet.address);
+      expect(lockedUnitlBefore).to.gt(0);
+
+      await pair.connect(signer).adminUnlock(wallet.address);
+
+      const lockedUnitlAfter = await pair.lockedUntil(wallet.address);
+      expect(lockedUnitlAfter).to.equal(0);
+    });
+    it("should not allow admin to unlock liquidity after aug 6th", async () => {
+      const { pair, wallet, token0, token1 } = await loadFixture(fixture);
+      // impersonate admin
+      await hre.network.provider.request({
+        method: "hardhat_impersonateAccount",
+        params: [admin],
+      });
+      const signer = await ethers.getSigner(admin);
+      await addDefaultLiquidity(token0, token1, pair, wallet);
+      const lockedUnitlBefore = await pair.lockedUntil(wallet.address);
+      expect(lockedUnitlBefore).to.gt(0);
+
+      // Fast forward to aug 6th
+      // as our fork is almost 1 month behind we need to fast forward 60 days
+      await fastForward(60 * 24 * 60 * 60);
+      await mine();
+
+      await expect(
+        pair.connect(signer).adminUnlock(wallet.address)
+      ).to.be.revertedWith("May not unlock after August 6th.");
+    });
   });
 });

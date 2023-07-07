@@ -14,6 +14,7 @@ interface IInedibleXV1Factory {
         address indexed token1,
         address pair,
         uint pairLength,
+        bool launch,
         uint lock,
         uint vesting
     );

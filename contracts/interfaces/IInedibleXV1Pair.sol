@@ -2,6 +2,11 @@
 pragma solidity >=0.5.0;
 
 interface IInedibleXV1Pair {
+    struct Balance {
+        uint balance0;
+        uint balance1;
+    }
+
     event Approval(address indexed owner, address indexed spender, uint value);
     event Transfer(address indexed from, address indexed to, uint value);
 
@@ -90,6 +95,7 @@ interface IInedibleXV1Pair {
         uint amount0Out,
         uint amount1Out,
         address to,
+        address operator,
         bytes calldata data
     ) external;
 
@@ -100,11 +106,11 @@ interface IInedibleXV1Pair {
     function initialize(
         address _token0,
         address _token1,
+        address _router,
         uint16 _minSupplyPct,
         uint16 _launchFeePct,
         bool _launch,
         uint40 _lockDuration,
-        uint40 _vestingDuration,
-        address _deployer
+        uint40 _vestingDuration
     ) external;
 }
